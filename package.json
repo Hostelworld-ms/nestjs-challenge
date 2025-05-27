@@ -7,8 +7,10 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "mongo:start": "docker compose -f ./docker-compose-mongo.yml up -d",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"libs/**/*.ts\"",
+    "containers:start": "docker compose -f ./docker-compose-mongo.yml up -d",
+    "rmq:start": "docker compose -f 'docker-compose-mongo.yml' up -d --build 'rabbitmq'",
+    "redis:start":"docker compose -f 'docker-compose-mongo.yml' up -d --build 'redis'",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
@@ -22,11 +24,18 @@
     "setup:db": "ts-node -r tsconfig-paths/register setup-db.ts"
   },
   "dependencies": {
+    "@nestjs/cache-manager": "^3.0.1",
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
+    "@nestjs/mapped-types": "*",
+    "@nestjs/microservices": "^11.1.1",
     "@nestjs/mongoose": "^11.0.1",
     "@nestjs/platform-express": "^11.0.0",
     "@nestjs/swagger": "^11.0.6",
+    "amqp-connection-manager": "^4.1.14",
+    "amqplib": "^0.10.8",
+    "cache-manager": "^6.4.3",
+    "cache-manager-ioredis": "^2.1.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "dotenv": "^16.4.7",
@@ -64,7 +73,7 @@
       "json",
       "ts"
     ],
-    "rootDir": "src",
+    "rootDir": ".",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
@@ -72,7 +81,15 @@
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],
-    "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "coverageDirectory": "./coverage",
+    "testEnvironment": "node",
+    "roots": [
+      "<rootDir>/src/",
+      "<rootDir>/libs/"
+    ],
+    "moduleNameMapper": {
+      "^@app/common(|/.*)$": "<rootDir>/libs/common/src/$1",
+      "^src/(.*)$": "<rootDir>/src/$1"
+    }
   }
 }

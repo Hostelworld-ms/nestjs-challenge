@@ -10,13 +10,18 @@ This is a **NestJS** application starter with MongoDB integration. If necessary,
 ```bash
 $ npm install
 ````
+### copy and update env variables
+copie the env variables in the .env.example and update the values. For the `RABBITMQ_DEFAULT_USER` and `RABBITMQ_DEFAULT_USER` you can use `admin` but feel free to change it.
 
-### Docker for MongoDB Emulator
-To use the MongoDB Emulator, you can start it using Docker:
+```bash
+$ cp .env.example .env
+````
+### Docker for MongoDB Emulator, Redis and Rabbit MQ
+To use all the docker containers Emulator, you can start it using Docker:
 ```
-npm run mongo:start
+npm run containers:start
 ```
-This will start a MongoDB instance running on your local machine. You can customize the settings in the Docker setup by modifying the docker-compose-mongo.yml if necessary. In the current configuration, you will have a MongoDB container running, which is accessible at localhost:27017.
+This will start the following docker contanains (MongoDB, Redis, and Rabbit MQ) instance running on your local machine. You can customize the settings in the Docker setup bsy modifying the docker-compose-mongo.yml if necessary. In the current configuration, you will have a MongoDB container running, which is accessible at localhost:27017.
 This mongo url will be necessary on the .env file, with example as follows:
 
 ```
@@ -102,4 +107,12 @@ To check if your code passes ESLint checks:
 npm run lint
 ```
 This command will show you any linting issues with your code.
+
+
+### admin Dashboard
+there is a simple dashboard to upload records and view records. Right it only works locally at the root of the page ('http://localhost:3000/') as the backend is not hosted. Onclick of each record will open a slide menu with all the list of tracks. try updating any record and with a valid mbid to see how it works.
+
+<img src="public/images/Screenshot 2025-05-22 at 14.49.46.png" />
+
+
 

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Record Admin Panel</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 40px;
+      background-color: #f4f4f4;
+    }
+    h1 {
+      text-align: center;
+    }
+    form, table {
+      background-color: #fff;
+      padding: 20px;
+      margin-bottom: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    input, select, button {
+      margin: 5px 0;
+      padding: 10px;
+      width: 100%;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    button {
+      background-color: #007bff;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      cursor: pointer;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 10px;
+      text-align: left;
+    }
+    th {
+      background-color: #007bff;
+      color: white;
+    }
+    /* Sliding sidebar styles */
+    #trackSidebar {
+      position: fixed;
+      top: 0;
+      left: -450px; /* hidden by default */
+      width: 400px;
+      height: 100%;
+      background-color: #fff;
+      box-shadow: 3px 0 10px rgba(0,0,0,0.2);
+      padding: 20px;
+      overflow-y: auto;
+      transition: left 0.3s ease;
+      z-index: 1000;
+    }
+    #trackSidebar.open {
+      left: 0;
+    }
+    #trackSidebar h2 {
+      margin-top: 0;
+    }
+    #trackSidebar button.closeBtn {
+      background-color: #dc3545;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      cursor: pointer;
+      border-radius: 4px;
+      float: right;
+      font-size: 16px;
+    }
+    #trackList {
+      margin-top: 40px;
+    }
+    #trackList .track {
+      border-bottom: 1px solid #ddd;
+      padding: 10px 0;
+    }
+    #trackList .track:last-child {
+      border-bottom: none;
+    }
+    #trackList .track-title {
+      font-weight: bold;
+    }
+    #trackList .track-info {
+      font-size: 14px;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+  <h1>Record Admin Panel</h1>
+
+  <form id="recordForm">
+    <h2>Add / Update Record</h2>
+    <input type="text" id="id" placeholder="ID (for update only)" />
+    <input type="text" id="artist" placeholder="Artist" required />
+    <input type="text" id="album" placeholder="Album" required />
+    <input type="number" id="price" placeholder="Price" required />
+    <input type="number" id="qty" placeholder="Quantity" required />
+    <select id="format" required>
+      <option value="">Select Format</option>
+      <option value="Vinyl">Vinyl</option>
+      <option value="CD">CD</option>
+    </select>
+    <select id="category" required>
+      <option value="">Select Category</option>
+      <option value="Rock">Rock</option>
+      <option value="Jazz">Jazz</option>
+      <option value="Pop">Pop</option>
+    </select>
+    <input type="text" id="mbid" placeholder="MusicBrainz ID (optional)" />
+    <button type="submit">Submit</button>
+  </form>
+
+  <div>
+    <h2>Filter Records</h2>
+    <input type="text" id="filter" placeholder="Search artist, album, category, or format" oninput="fetchRecords()" />
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Artist</th>
+        <th>Album</th>
+        <th>Price</th>
+        <th>Quantity</th>
+        <th>Format</th>
+        <th>Category</th>
+        <th>MBID</th>
+      </tr>
+    </thead>
+    <tbody id="recordTableBody"></tbody>
+  </table>
+
+  <!-- Sliding sidebar for tracks -->
+  <div id="trackSidebar">
+    <button class="closeBtn" onclick="closeSidebar()">Close ×</button>
+    <h2>Track List</h2>
+    <div id="trackList">
+      <!-- Track details will be injected here -->
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = 'http://localhost:3000/records'; // adjust if needed
+
+    document.getElementById('recordForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+
+      const id = document.getElementById('id').value;
+      const data = {
+        artist: document.getElementById('artist').value,
+        album: document.getElementById('album').value,
+        price: parseFloat(document.getElementById('price').value),
+        qty: parseInt(document.getElementById('qty').value),
+        format: document.getElementById('format').value,
+        category: document.getElementById('category').value,
+        mbid: document.getElementById('mbid').value || undefined,
+      };
+
+      const method = id ? 'PUT' : 'POST';
+      const url = id ? `${API_BASE}/${id}` : API_BASE;
+
+      await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+
+      this.reset();
+      fetchRecords();
+    });
+
+    async function fetchRecords() {
+      const q = document.getElementById('filter').value;
+      const res = await fetch(`${API_BASE}?q=${encodeURIComponent(q)}`);
+      const records = await res.json();
+      const tbody = document.getElementById('recordTableBody');
+      tbody.innerHTML = '';
+      records.forEach(r => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${r._id}</td>
+          <td>${r.artist}</td>
+          <td>${r.album}</td>
+          <td>${r.price}</td>
+          <td>${r.qty}</td>
+          <td>${r.format}</td>
+          <td>${r.category}</td>
+          <td>${r.mbid || ''}</td>
+        `;
+        row.addEventListener('click', () => showTrackList(r));
+        tbody.appendChild(row);
+      });
+    }
+
+    function showTrackList(record) {
+      const sidebar = document.getElementById('trackSidebar');
+      const trackListDiv = document.getElementById('trackList');
+      trackListDiv.innerHTML = '';
+
+      if (!record.trackList || record.trackList.length === 0) {
+        trackListDiv.innerHTML = '<p>No tracks available for this record.</p>';
+      } else {
+        record.trackList.forEach(track => {
+          const trackEl = document.createElement('div');
+          trackEl.classList.add('track');
+
+          // Format video field nicely:
+          const videoText = track.video ? 'Yes' : 'No';
+
+          trackEl.innerHTML = `
+            <div class="track-title">${track.title || 'Untitled Track'}</div>
+            <div class="track-info">Release Date: ${track.firstReleaseDate || 'N/A'}</div>
+            <div class="track-info">Disambiguation: ${track.disambiguation || 'N/A'}</div>
+            <div class="track-info">Video: ${videoText}</div>
+            <div class="track-info">Length: ${track.length || 0} seconds</div>
+            <div class="track-info">Title In Recording: ${track.titleInTheRecording || 'N/A'}</div>
+            <div class="track-info">ID: ${track.id}</div>
+          `;
+          trackListDiv.appendChild(trackEl);
+        });
+      }
+      sidebar.classList.add('open');
+    }
+
+    function closeSidebar() {
+      document.getElementById('trackSidebar').classList.remove('open');
+    }
+
+    fetchRecords();
+  </script>
+</body>
+</html>

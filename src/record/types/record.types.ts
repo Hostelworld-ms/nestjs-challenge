@@ -14,3 +14,13 @@ export enum RecordCategory {
   ALTERNATIVE = 'Alternative',
   INDIE = 'Indie',
 }
+
+export interface TrackList {
+  title?: string;
+  firstReleaseDate: string;
+  disambiguation: string;
+  video: boolean;
+  length: number;
+  titleInTheRecording?: string;
+  id: string;
+}
