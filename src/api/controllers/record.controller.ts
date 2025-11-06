@@ -1,25 +1,34 @@
 import {
+  Body,
+  ConflictException,
   Controller,
   Get,
-  Post,
-  Body,
+  Logger,
+  NotFoundException,
   Param,
-  Query,
+  Post,
   Put,
-  InternalServerErrorException,
+  Query,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Record } from '../schemas/record.schema';
-import { Model } from 'mongoose';
 import { ApiOperation, ApiQuery, ApiResponse } from '@nestjs/swagger';
 import { CreateRecordRequestDTO } from '../dtos/create-record.request.dto';
-import { RecordCategory, RecordFormat } from '../schemas/record.enum';
 import { UpdateRecordRequestDTO } from '../dtos/update-record.request.dto';
+import { RecordCategory, RecordFormat } from '../schemas/record.enum';
+import { Record } from '../schemas/record.schema';
+import { MusicBrainzService } from '../services/music-brainz.service';
+import { RecordService } from '../services/record.service';
+import {
+  DEFAULT_PAGINATION_LIMIT,
+  PaginationUtils,
+} from '../utils/pagination.utils';
 
 @Controller('records')
 export class RecordController {
+  private readonly logger = new Logger(RecordController.name);
+
   constructor(
-    @InjectModel('Record') private readonly recordModel: Model<Record>,
+    private readonly musicBrainzService: MusicBrainzService,
+    private readonly recordService: RecordService,
   ) {}
 
   @Post()
@@ -27,7 +36,26 @@ export class RecordController {
   @ApiResponse({ status: 201, description: 'Record successfully created' })
   @ApiResponse({ status: 400, description: 'Bad Request' })
   async create(@Body() request: CreateRecordRequestDTO): Promise<Record> {
-    return await this.recordModel.create({
+    const record = await this.recordService.findOne({
+      artist: request.artist,
+      album: request.album,
+      format: request.format,
+    });
+
+    if (record) {
+      throw new ConflictException(
+        'Record already exists with the same artist, album, and format',
+      );
+    }
+
+    let trackList: string[] = [];
+    if (request.mbid) {
+      trackList = await this.musicBrainzService.getReleaseTrackList(
+        request.mbid,
+      );
+    }
+
+    const recordData = {
       artist: request.artist,
       album: request.album,
       price: request.price,
@@ -35,7 +63,14 @@ export class RecordController {
       format: request.format,
       category: request.category,
       mbid: request.mbid,
-    });
+      trackList,
+    };
+
+    this.logger.log(
+      `Creating record with the following data: ${JSON.stringify(recordData)}`,
+    );
+
+    return this.recordService.createRecord(recordData);
   }
 
   @Put(':id')
@@ -46,17 +81,25 @@ export class RecordController {
     @Param('id') id: string,
     @Body() updateRecordDto: UpdateRecordRequestDTO,
   ): Promise<Record> {
-    const record = await this.recordModel.findById(id);
+    const record = await this.recordService.findById(id);
     if (!record) {
-      throw new InternalServerErrorException('Record not found');
+      throw new NotFoundException('Record not found');
+    }
+
+    if (
+      record.mbid &&
+      updateRecordDto.mbid &&
+      record.mbid !== updateRecordDto.mbid
+    ) {
+      let trackList = await this.musicBrainzService.getReleaseTrackList(
+        updateRecordDto.mbid,
+      );
+      Object.assign(record, { trackList });
     }
 
     Object.assign(record, updateRecordDto);
 
-    const updated = await this.recordModel.updateOne(record);
-    if (!updated) {
-      throw new InternalServerErrorException('Failed to update record');
-    }
+    await record.save();
 
     return record;
   }
@@ -107,39 +150,40 @@ export class RecordController {
     @Query('album') album?: string,
     @Query('format') format?: RecordFormat,
     @Query('category') category?: RecordCategory,
-  ): Promise<Record[]> {
-    const allRecords = await this.recordModel.find().exec();
+    @Query('next') next?: string,
+  ): Promise<{
+    data: Record[];
+    nextCursor: string;
+  }> {
+    const cursorValue =
+      next ?? PaginationUtils.encodeCursor({ limit: DEFAULT_PAGINATION_LIMIT });
 
-    const filteredRecords = allRecords.filter((record) => {
-      let match = true;
+    const findParams = {
+      q,
+      artist,
+      album,
+      format,
+      category,
+      cursor: cursorValue,
+    };
 
-      if (q) {
-        match =
-          match &&
-          (record.artist.includes(q) ||
-            record.album.includes(q) ||
-            record.category.includes(q));
-      }
+    const records = await this.recordService.findAllCached(findParams);
 
-      if (artist) {
-        match = match && record.artist.includes(artist);
-      }
+    const last =
+      records && records.length
+        ? (records[records.length - 1]._id as string)
+        : undefined;
 
-      if (album) {
-        match = match && record.album.includes(album);
-      }
+    const nextCursor = last
+      ? PaginationUtils.encodeCursor({
+          last,
+          limit: DEFAULT_PAGINATION_LIMIT,
+        })
+      : undefined;
 
-      if (format) {
-        match = match && record.format === format;
-      }
-
-      if (category) {
-        match = match && record.category === category;
-      }
-
-      return match;
-    });
-
-    return filteredRecords;
+    return {
+      data: records,
+      nextCursor,
+    };
   }
 }

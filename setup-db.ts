@@ -1,8 +1,9 @@
-import * as mongoose from 'mongoose';
-import { Record, RecordSchema } from './src/api/schemas/record.schema';
 import * as fs from 'fs';
-import { AppConfig } from './src/app.config';
+import * as mongoose from 'mongoose';
 import * as readline from 'readline';
+import { Order, OrderSchema } from 'src/api/schemas/order.schema';
+import { Record, RecordSchema } from './src/api/schemas/record.schema';
+import { AppConfig } from './src/app.config';
 
 async function setupDatabase() {
   try {
@@ -21,11 +22,16 @@ async function setupDatabase() {
           'Record',
           RecordSchema,
         );
+        const orderModel: mongoose.Model<Order> = mongoose.model<Order>(
+          'Order',
+          OrderSchema,
+        );
 
         await mongoose.connect(AppConfig.mongoUrl);
 
         if (answer.toLowerCase() === 'y') {
           await recordModel.deleteMany({});
+          await orderModel.deleteMany({});
           console.log('Existing collection cleaned up.');
         }
 
