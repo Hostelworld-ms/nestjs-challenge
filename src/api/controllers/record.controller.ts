@@ -6,20 +6,24 @@ import {
   Param,
   Query,
   Put,
-  InternalServerErrorException,
+  BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Record } from '../schemas/record.schema';
-import { Model } from 'mongoose';
-import { ApiOperation, ApiQuery, ApiResponse } from '@nestjs/swagger';
+import { Model, Types } from 'mongoose';
+import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CreateRecordRequestDTO } from '../dtos/create-record.request.dto';
 import { RecordCategory, RecordFormat } from '../schemas/record.enum';
 import { UpdateRecordRequestDTO } from '../dtos/update-record.request.dto';
+import { MusicBrainzService } from '../services/musicbrainz.service';
 
+@ApiTags('records')
 @Controller('records')
 export class RecordController {
   constructor(
     @InjectModel('Record') private readonly recordModel: Model<Record>,
+    private readonly musicBrainzService: MusicBrainzService,
   ) {}
 
   @Post()
@@ -27,6 +31,14 @@ export class RecordController {
   @ApiResponse({ status: 201, description: 'Record successfully created' })
   @ApiResponse({ status: 400, description: 'Bad Request' })
   async create(@Body() request: CreateRecordRequestDTO): Promise<Record> {
+    let tracklist: string[] = [];
+
+    if (request.mbid) {
+      tracklist = await this.musicBrainzService.fetchTracklistByMbid(
+        request.mbid,
+      );
+    }
+
     return await this.recordModel.create({
       artist: request.artist,
       album: request.album,
@@ -35,29 +47,41 @@ export class RecordController {
       format: request.format,
       category: request.category,
       mbid: request.mbid,
+      tracklist,
     });
   }
 
   @Put(':id')
   @ApiOperation({ summary: 'Update an existing record' })
   @ApiResponse({ status: 200, description: 'Record updated successfully' })
-  @ApiResponse({ status: 500, description: 'Cannot find record to update' })
+  @ApiResponse({ status: 404, description: 'Record not found' })
   async update(
     @Param('id') id: string,
     @Body() updateRecordDto: UpdateRecordRequestDTO,
   ): Promise<Record> {
     const record = await this.recordModel.findById(id);
     if (!record) {
-      throw new InternalServerErrorException('Record not found');
+      throw new NotFoundException('Record not found');
+    }
+
+    // If MBID changed, refetch tracklist
+    if (
+      updateRecordDto.mbid !== undefined &&
+      updateRecordDto.mbid !== record.mbid
+    ) {
+      if (updateRecordDto.mbid) {
+        record.tracklist = await this.musicBrainzService.fetchTracklistByMbid(
+          updateRecordDto.mbid,
+        );
+      } else {
+        // mbid removed => clear tracklist
+        record.tracklist = [];
+      }
     }
 
     Object.assign(record, updateRecordDto);
 
-    const updated = await this.recordModel.updateOne(record);
-    if (!updated) {
-      throw new InternalServerErrorException('Failed to update record');
-    }
-
+    await record.save();
     return record;
   }
 
@@ -72,19 +96,19 @@ export class RecordController {
     name: 'q',
     required: false,
     description:
-      'Search query (search across multiple fields like artist, album, category, etc.)',
+      'Full-text search across artist/album/category (uses text index)',
     type: String,
   })
   @ApiQuery({
     name: 'artist',
     required: false,
-    description: 'Filter by artist name',
+    description: 'Filter by artist name (exact match)',
     type: String,
   })
   @ApiQuery({
     name: 'album',
     required: false,
-    description: 'Filter by album name',
+    description: 'Filter by album name (exact match)',
     type: String,
   })
   @ApiQuery({
@@ -101,45 +125,54 @@ export class RecordController {
     enum: RecordCategory,
     type: String,
   })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Max number of records to return (default 20, max 100)',
+    type: Number,
+  })
+  @ApiQuery({
+    name: 'after',
+    required: false,
+    description:
+      'Cursor pagination: Mongo ObjectId of the last item from the previous page',
+    type: String,
+  })
   async findAll(
     @Query('q') q?: string,
     @Query('artist') artist?: string,
     @Query('album') album?: string,
     @Query('format') format?: RecordFormat,
     @Query('category') category?: RecordCategory,
+    @Query('limit') limit = '20',
+    @Query('after') after?: string,
   ): Promise<Record[]> {
-    const allRecords = await this.recordModel.find().exec();
+    const filter: any = {};
 
-    const filteredRecords = allRecords.filter((record) => {
-      let match = true;
+    // clamp limit to 1..100 (default 20)
+    const parsedLimit = Number.parseInt(limit, 10);
+    const safeLimit = Number.isFinite(parsedLimit) ? parsedLimit : 20;
+    const take = Math.min(Math.max(safeLimit, 1), 100);
 
-      if (q) {
-        match =
-          match &&
-          (record.artist.includes(q) ||
-            record.album.includes(q) ||
-            record.category.includes(q));
+    if (format) filter.format = format;
+    if (category) filter.category = category;
+
+    // index-friendly exact matches
+    if (artist) filter.artist = artist;
+    if (album) filter.album = album;
+
+    // full-text search
+    if (q) {
+      filter.$text = { $search: q };
+    }
+
+    if (after) {
+      if (!Types.ObjectId.isValid(after)) {
+        throw new BadRequestException('Invalid "after" cursor');
       }
+      filter._id = { $gt: new Types.ObjectId(after) };
+    }
 
-      if (artist) {
-        match = match && record.artist.includes(artist);
-      }
-
-      if (album) {
-        match = match && record.album.includes(album);
-      }
-
-      if (format) {
-        match = match && record.format === format;
-      }
-
-      if (category) {
-        match = match && record.category === category;
-      }
-
-      return match;
-    });
-
-    return filteredRecords;
+    return this.recordModel.find(filter).sort({ _id: 1 }).limit(take).exec();
   }
 }

@@ -7,9 +7,11 @@ import { RecordFormat, RecordCategory } from '../src/api/schemas/record.enum';
 describe('RecordController (e2e)', () => {
   let app: INestApplication;
   let recordId: string;
-  let recordModel;
+  let recordModel: any;
 
-  beforeEach(async () => {
+  jest.setTimeout(30000);
+
+  beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -19,7 +21,17 @@ describe('RecordController (e2e)', () => {
     await app.init();
   });
 
-  // Test to create a record
+  afterEach(async () => {
+    if (recordId) {
+      await recordModel.findByIdAndDelete(recordId);
+      recordId = undefined;
+    }
+  });
+
+  afterAll(async () => {
+    if (app) await app.close();
+  });
+
   it('should create a new record', async () => {
     const createRecordDto = {
       artist: 'The Beatles',
@@ -60,16 +72,8 @@ describe('RecordController (e2e)', () => {
     const response = await request(app.getHttpServer())
       .get('/records?artist=The Fake Band')
       .expect(200);
+
     expect(response.body.length).toBe(1);
     expect(response.body[0]).toHaveProperty('artist', 'The Fake Band');
-  });
-  afterEach(async () => {
-    if (recordId) {
-      await recordModel.findByIdAndDelete(recordId);
-    }
-  });
-
-  afterAll(async () => {
-    await app.close();
   });
 });
