@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model } from 'mongoose';
-import { Record } from '../schemas/record.schema';
+import { RECORD_COLLATION, Record } from '../schemas/record.schema';
 import { CreateRecordRequestDTO } from '../dtos/create-record.request.dto';
 import { UpdateRecordRequestDTO } from '../dtos/update-record.request.dto';
 import {
@@ -23,7 +23,10 @@ export class RecordService {
 
   async create(dto: CreateRecordRequestDTO): Promise<Record> {
     try {
-      return await this.recordModel.create({ ...dto, lastModified: new Date() });
+      return await this.recordModel.create({
+        ...dto,
+        lastModified: new Date(),
+      });
     } catch (err: any) {
       if (err?.code === 11000) {
         throw new ConflictException(
@@ -63,30 +66,44 @@ export class RecordService {
     const { q, artist, album, format, category, page, limit } = query;
 
     const filter: FilterQuery<Record> = {};
-    let projection: { [key: string]: unknown } | undefined;
     let sort: { [key: string]: unknown } = { _id: 1 };
+    let useCollation = false;
 
     if (q) {
       filter.$text = { $search: q };
-      projection = { score: { $meta: 'textScore' } };
       sort = { score: { $meta: 'textScore' } };
     }
-    if (artist) filter.artist = { $regex: escapeRegex(artist), $options: 'i' };
-    if (album) filter.album = { $regex: escapeRegex(album), $options: 'i' };
+
+    if (artist) {
+      filter.artist = { $regex: `^${escapeRegex(artist)}` };
+      useCollation = true;
+    }
+    if (album) {
+      filter.album = { $regex: `^${escapeRegex(album)}` };
+      useCollation = true;
+    }
     if (format) filter.format = format;
     if (category) filter.category = category;
 
     const skip = (page - 1) * limit;
 
+    const dataQuery = this.recordModel
+      .find(filter)
+      .sort(sort as any)
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const countQuery = this.recordModel.countDocuments(filter);
+
+    if (useCollation) {
+      dataQuery.collation(RECORD_COLLATION);
+      countQuery.collation(RECORD_COLLATION);
+    }
+
     const [data, total] = await Promise.all([
-      this.recordModel
-        .find(filter, projection)
-        .sort(sort as any)
-        .skip(skip)
-        .limit(limit)
-        .lean()
-        .exec() as unknown as Promise<Record[]>,
-      this.recordModel.countDocuments(filter).exec(),
+      dataQuery.exec() as unknown as Promise<Record[]>,
+      countQuery.exec(),
     ]);
 
     return {
@@ -94,7 +111,7 @@ export class RecordService {
       total,
       page,
       limit,
-      totalPages: Math.max(1, Math.ceil(total / limit)),
+      totalPages: total === 0 ? 0 : Math.ceil(total / limit),
     };
   }
 }

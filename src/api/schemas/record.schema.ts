@@ -2,12 +2,15 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import { RecordFormat, RecordCategory } from './record.enum';
 
+// strength: 2 = case-insensitive, accent-sensitive.
+export const RECORD_COLLATION = { locale: 'en', strength: 2 } as const;
+
 @Schema({ timestamps: true })
 export class Record extends Document {
-  @Prop({ required: true, index: true })
+  @Prop({ required: true })
   artist: string;
 
-  @Prop({ required: true, index: true })
+  @Prop({ required: true })
   album: string;
 
   @Prop({ required: true })
@@ -39,10 +42,22 @@ export const RecordSchema = SchemaFactory.createForClass(Record);
 
 RecordSchema.index(
   { artist: 1, album: 1, format: 1 },
-  { unique: true, name: 'uniq_artist_album_format' },
+  {
+    unique: true,
+    name: 'uniq_artist_album_format',
+    collation: RECORD_COLLATION,
+  },
 );
 
 RecordSchema.index(
   { artist: 'text', album: 'text', category: 'text' },
-  { name: 'text_artist_album_category', weights: { artist: 3, album: 3, category: 1 } },
+  {
+    name: 'text_artist_album_category',
+    weights: { artist: 3, album: 3, category: 1 },
+  },
+);
+
+RecordSchema.index(
+  { album: 1 },
+  { name: 'album_ci', collation: RECORD_COLLATION },
 );

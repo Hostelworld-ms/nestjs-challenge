@@ -8,6 +8,7 @@ import {
   PaginatedRecords,
 } from '../dtos/find-records.query.dto';
 import { RecordService } from '../services/record.service';
+import { ParseMongoIdPipe } from '../../common/pipes/parse-mongo-id.pipe';
 
 @ApiTags('records')
 @Controller('records')
@@ -26,10 +27,11 @@ export class RecordController {
   @Put(':id')
   @ApiOperation({ summary: 'Update an existing record' })
   @ApiResponse({ status: 200, description: 'Record updated successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid id' })
   @ApiResponse({ status: 404, description: 'Record not found' })
   @ApiResponse({ status: 409, description: 'Duplicate record (artist+album+format)' })
   update(
-    @Param('id') id: string,
+    @Param('id', ParseMongoIdPipe) id: string,
     @Body() updateRecordDto: UpdateRecordRequestDTO,
   ): Promise<Record> {
     return this.recordService.update(id, updateRecordDto);
@@ -38,8 +40,9 @@ export class RecordController {
   @Get(':id')
   @ApiOperation({ summary: 'Get a record by id' })
   @ApiResponse({ status: 200, description: 'Record found' })
+  @ApiResponse({ status: 400, description: 'Invalid id' })
   @ApiResponse({ status: 404, description: 'Record not found' })
-  findOne(@Param('id') id: string): Promise<Record> {
+  findOne(@Param('id', ParseMongoIdPipe) id: string): Promise<Record> {
     return this.recordService.findById(id);
   }
 

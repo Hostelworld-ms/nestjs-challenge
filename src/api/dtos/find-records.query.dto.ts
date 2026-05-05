@@ -19,12 +19,16 @@ export class FindRecordsQueryDTO {
   @IsString()
   q?: string;
 
-  @ApiPropertyOptional({ description: 'Filter by artist (partial, case-insensitive).' })
+  @ApiPropertyOptional({
+    description: 'Filter by artist (case-insensitive prefix match).',
+  })
   @IsOptional()
   @IsString()
   artist?: string;
 
-  @ApiPropertyOptional({ description: 'Filter by album (partial, case-insensitive).' })
+  @ApiPropertyOptional({
+    description: 'Filter by album (case-insensitive prefix match).',
+  })
   @IsOptional()
   @IsString()
   album?: string;
