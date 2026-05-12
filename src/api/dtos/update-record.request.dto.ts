@@ -76,9 +76,10 @@ export class UpdateRecordRequestDTO {
   category?: RecordCategory;
 
   @ApiProperty({
-    description: 'Musicbrainz identifier',
+    description:
+      'Optional MusicBrainz release MBID used to fetch tracklist (artist MBIDs are invalid here)',
     type: String,
-    example: 'b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d',
+    example: '2f8f1118-53f1-3ea4-9c52-a4f9ed89d734',
     required: false,
   })
   @IsOptional()

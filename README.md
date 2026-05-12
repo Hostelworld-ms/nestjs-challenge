@@ -103,3 +103,25 @@ npm run lint
 ```
 This command will show you any linting issues with your code.
 
+
+## Adjustment to exisitng implementation notes
+
+### MBID + MusicBrainz behavior
+
+- `mbid` is optional on create/update requests.
+- When provided, it must be a **MusicBrainz release MBID** because the service calls the MusicBrainz release endpoint to fetch tracklist data.
+- Error handling is now explicit:
+  - Invalid/non-existent release MBID (404) -> `Invalid release MBID`
+  - Upstream/network/unavailable cases -> `MusicBrainz unavailable`
+- Swagger DTO descriptions were updated to clarify that artist MBIDs are not valid for this field.
+
+### Local MongoDB reliability fix
+- The Mongo replica set member host was set to `localhost:27017` for host-machine NestJS runs.
+- App config now prefers `.env` values (`dotenv.config({ override: true })`) and includes a local Mongo fallback URL.
+- This prevents `ENOTFOUND mongodb` when running the API/tests outside Docker.
+
+### Unique artist + album + format
+- Records are unique on `(artist, album, format)` (MongoDB compound index).
+- Creating or updating to a combination that already exists will now return **409 Conflict** with a clear message instead of a raw Internal server err **500** duplicate-key error.
+- Swagger’s default example (e.g. The Beatles / Abbey Road / Vinyl) will return **409** if that row is already in our database from a previous POST or seed; so that we can use a different album name or delete the existing document to retry.
+
