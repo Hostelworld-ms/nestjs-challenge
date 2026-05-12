@@ -60,19 +60,21 @@ export class RecordController {
     name: 'q',
     required: false,
     description:
-      'Search query (search across multiple fields like artist, album, category, etc.)',
+      'Prefix match (case-insensitive) across artist, album, and category — optimized for indexed queries',
     type: String,
   })
   @ApiQuery({
     name: 'artist',
     required: false,
-    description: 'Filter by artist name',
+    description:
+      'Filter by artist name (case-insensitive prefix match, index-friendly)',
     type: String,
   })
   @ApiQuery({
     name: 'album',
     required: false,
-    description: 'Filter by album name',
+    description:
+      'Filter by album name (case-insensitive prefix match, index-friendly)',
     type: String,
   })
   @ApiQuery({

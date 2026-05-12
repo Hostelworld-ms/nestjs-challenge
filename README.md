@@ -125,3 +125,10 @@ This command will show you any linting issues with your code.
 - Creating or updating to a combination that already exists will now return **409 Conflict** with a clear message instead of a raw Internal server err **500** duplicate-key error.
 - Swagger’s default example (e.g. The Beatles / Abbey Road / Vinyl) will return **409** if that row is already in our database from a previous POST or seed; so that we can use a different album name or delete the existing document to retry.
 
+### Search, MusicBrainz hardening (code review)
+- **Filters** `q`, `artist`, and `album` use **case-insensitive prefix** regex (`^term`) so MongoDB can use normal B-tree indexes instead of full collection scans from unanchored `/term/i` patterns.
+- **MusicBrainz** `fetch` uses **AbortController** (~10s timeout) so slow upstream cannot hang request workers indefinitely.
+- Outbound calls are **serialized** with a minimum gap (~1.1s) to respect MusicBrainz rate guidance; **successful** XML responses are cached in memory (24h TTL) per release MBID to cut repeat traffic.
+- **Multi-disc** XML: all `<track-list>` blocks are parsed, not only the first.
+- **XML entities** are decoded in a **single pass** to avoid chained `&amp;` / `&lt;` corruption.
+

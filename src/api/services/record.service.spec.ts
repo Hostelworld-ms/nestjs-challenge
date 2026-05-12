@@ -33,6 +33,15 @@ describe('RecordService - MusicBrainz error handling', () => {
     await expect(
       (service as any).fetchReleaseFromMusicBrainz('invalid-release-id'),
     ).rejects.toThrow(new BadRequestException('Invalid release MBID'));
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'musicbrainz.org/ws/2/release/invalid-release-id',
+      ),
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+      }),
+    );
   });
 
   it('returns MusicBrainz unavailable when fetch throws', async () => {
@@ -53,6 +62,33 @@ describe('RecordService - MusicBrainz error handling', () => {
     await expect(
       (service as any).fetchReleaseFromMusicBrainz('any-id'),
     ).rejects.toThrow(new BadRequestException('MusicBrainz unavailable'));
+  });
+});
+
+describe('RecordService - tracklist & XML decoding', () => {
+  let service: RecordService;
+
+  beforeEach(() => {
+    service = new RecordService({} as any);
+  });
+
+  it('merges tracks from every track-list block (multi-disc)', () => {
+    const xml = `
+      <release>
+        <track-list><track><title>Disc1</title></track></track-list>
+        <track-list><track><title>Disc2</title></track></track-list>
+      </release>`;
+    expect((service as any).extractTracklist(xml)).toEqual([
+      'Disc1',
+      'Disc2',
+    ]);
+  });
+
+  it('decodeXmlEntities does not cascade &amp; before &lt;', () => {
+    expect((service as any).decodeXmlEntities('A &amp;lt; B')).toBe('A &lt; B');
+    expect((service as any).decodeXmlEntities('Foo &amp; Bar')).toBe(
+      'Foo & Bar',
+    );
   });
 });
 

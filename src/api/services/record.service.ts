@@ -14,6 +14,16 @@ import { Record } from '../schemas/record.schema';
 @Injectable()
 export class RecordService {
   private readonly maxLimit = 100;
+  private readonly musicBrainzFetchTimeoutMs = 10_000;
+  /** MusicBrainz asks for ~1 req/s per IP; pad slightly to stay under the limit. */
+  private readonly musicBrainzRequestIntervalMs = 1_100;
+  private readonly musicBrainzXmlCacheTtlMs = 86_400_000;
+  private lastMusicBrainzRequestAt = 0;
+  private musicBrainzRequestChain: Promise<unknown> = Promise.resolve();
+  private readonly musicBrainzXmlCache = new Map<
+    string,
+    { xml: string; expiresAt: number }
+  >();
 
   constructor(
     @InjectModel('Record') private readonly recordModel: Model<Record>,
@@ -113,23 +123,25 @@ export class RecordService {
     }
 
     if (filters.artist) {
-      query.artist = this.toInsensitiveRegex(filters.artist);
+      query.artist = this.toPrefixInsensitiveRegex(filters.artist);
     }
 
     if (filters.album) {
-      query.album = this.toInsensitiveRegex(filters.album);
+      query.album = this.toPrefixInsensitiveRegex(filters.album);
     }
 
     if (filters.q) {
-      const search = this.toInsensitiveRegex(filters.q);
+      const search = this.toPrefixInsensitiveRegex(filters.q);
       query.$or = [{ artist: search }, { album: search }, { category: search }];
     }
 
     return query;
   }
 
-  private toInsensitiveRegex(value: string): RegExp {
-    return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+  /** Prefix-anchored, case-insensitive match so MongoDB can bound index scans. */
+  private toPrefixInsensitiveRegex(value: string): RegExp {
+    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`^${escaped}`, 'i');
   }
 
   private rethrowIfDuplicateKey(err: unknown): void {
@@ -154,50 +166,108 @@ export class RecordService {
     return this.extractTracklist(xml);
   }
 
+  private getCachedMusicBrainzXml(mbid: string): string | undefined {
+    const entry = this.musicBrainzXmlCache.get(mbid);
+    if (!entry) {
+      return undefined;
+    }
+    if (entry.expiresAt <= Date.now()) {
+      this.musicBrainzXmlCache.delete(mbid);
+      return undefined;
+    }
+    return entry.xml;
+  }
+
+  private setCachedMusicBrainzXml(mbid: string, xml: string): void {
+    this.musicBrainzXmlCache.set(mbid, {
+      xml,
+      expiresAt: Date.now() + this.musicBrainzXmlCacheTtlMs,
+    });
+  }
+
+  /**
+   * Serialize outbound MusicBrainz calls (rate limit) while letting cache hits bypass the queue.
+   */
+  private runThrottledMusicBrainzRequest<T>(fn: () => Promise<T>): Promise<T> {
+    const job = this.musicBrainzRequestChain.then(async () => {
+      const now = Date.now();
+      const wait = Math.max(
+        0,
+        this.musicBrainzRequestIntervalMs -
+          (now - this.lastMusicBrainzRequestAt),
+      );
+      if (wait > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, wait));
+      }
+      this.lastMusicBrainzRequestAt = Date.now();
+      return fn();
+    });
+    this.musicBrainzRequestChain = job.then(
+      () => undefined,
+      () => undefined,
+    );
+    return job;
+  }
+
   private async fetchReleaseFromMusicBrainz(mbid: string): Promise<string> {
-    let response: Response;
-    try {
-      response = await fetch(
-        `https://musicbrainz.org/ws/2/release/${encodeURIComponent(mbid)}?inc=recordings&fmt=xml`,
-        {
+    const cached = this.getCachedMusicBrainzXml(mbid);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    return this.runThrottledMusicBrainzRequest(async () => {
+      const url = `https://musicbrainz.org/ws/2/release/${encodeURIComponent(mbid)}?inc=recordings&fmt=xml`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        this.musicBrainzFetchTimeoutMs,
+      );
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          signal: controller.signal,
           headers: {
             Accept: 'application/xml',
             'User-Agent':
               'nestjs-record-store-challenge/1.0 (contact: challenge@local)',
           },
-        },
-      );
-    } catch {
-      throw new BadRequestException('MusicBrainz unavailable');
-    }
+        });
+      } catch {
+        throw new BadRequestException('MusicBrainz unavailable');
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
-    if (response.status === 404) {
-      throw new BadRequestException('Invalid release MBID');
-    }
+      if (response.status === 404) {
+        throw new BadRequestException('Invalid release MBID');
+      }
 
-    if (!response.ok) {
-      throw new BadRequestException('MusicBrainz unavailable');
-    }
+      if (!response.ok) {
+        throw new BadRequestException('MusicBrainz unavailable');
+      }
 
-    return response.text();
+      const xml = await response.text();
+      this.setCachedMusicBrainzXml(mbid, xml);
+      return xml;
+    });
   }
 
   private extractTracklist(xml: string): string[] {
-    const trackListMatch = xml.match(/<track-list[\s\S]*?<\/track-list>/i);
-    if (!trackListMatch) {
-      return [];
-    }
+    const trackListBlocks =
+      xml.match(/<track-list\b[\s\S]*?<\/track-list>/gi) ?? [];
 
     const trackBlockRegex = /<track\b[\s\S]*?<\/track>/gi;
     const titleRegex = /<title>([\s\S]*?)<\/title>/i;
     const tracks: string[] = [];
 
-    for (const trackBlock of trackListMatch[0].match(trackBlockRegex) ?? []) {
-      const titleMatch = trackBlock.match(titleRegex);
-      if (titleMatch?.[1]) {
-        const title = this.decodeXmlEntities(titleMatch[1].trim());
-        if (title) {
-          tracks.push(title);
+    for (const block of trackListBlocks) {
+      for (const trackBlock of block.match(trackBlockRegex) ?? []) {
+        const titleMatch = trackBlock.match(titleRegex);
+        if (titleMatch?.[1]) {
+          const title = this.decodeXmlEntities(titleMatch[1].trim());
+          if (title) {
+            tracks.push(title);
+          }
         }
       }
     }
@@ -205,12 +275,18 @@ export class RecordService {
     return tracks;
   }
 
+  /** Single-pass decode of the five predefined XML entities (avoids cascaded &amp;… bugs). */
   private decodeXmlEntities(value: string): string {
-    return value
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&apos;/g, "'");
+    const map: { [key: string]: string } = {
+      amp: '&',
+      lt: '<',
+      gt: '>',
+      quot: '"',
+      apos: "'",
+    };
+    return value.replace(
+      /&(amp|lt|gt|quot|apos);/g,
+      (full, entity: string) => map[entity] ?? full,
+    );
   }
 }
