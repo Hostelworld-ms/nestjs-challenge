@@ -6,59 +6,47 @@ import {
   Param,
   Query,
   Put,
-  InternalServerErrorException,
+  ParseIntPipe,
+  DefaultValuePipe,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Record } from '../schemas/record.schema';
-import { Model } from 'mongoose';
 import { ApiOperation, ApiQuery, ApiResponse } from '@nestjs/swagger';
 import { CreateRecordRequestDTO } from '../dtos/create-record.request.dto';
 import { RecordCategory, RecordFormat } from '../schemas/record.enum';
 import { UpdateRecordRequestDTO } from '../dtos/update-record.request.dto';
+import { Record } from '../schemas/record.schema';
+import { RecordService } from '../services/record.service';
 
 @Controller('records')
 export class RecordController {
-  constructor(
-    @InjectModel('Record') private readonly recordModel: Model<Record>,
-  ) {}
+  constructor(private readonly recordService: RecordService) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new record' })
   @ApiResponse({ status: 201, description: 'Record successfully created' })
   @ApiResponse({ status: 400, description: 'Bad Request' })
+  @ApiResponse({
+    status: 409,
+    description:
+      'Conflict — artist, album, and format combination already exists',
+  })
   async create(@Body() request: CreateRecordRequestDTO): Promise<Record> {
-    return await this.recordModel.create({
-      artist: request.artist,
-      album: request.album,
-      price: request.price,
-      qty: request.qty,
-      format: request.format,
-      category: request.category,
-      mbid: request.mbid,
-    });
+    return this.recordService.create(request);
   }
 
   @Put(':id')
   @ApiOperation({ summary: 'Update an existing record' })
   @ApiResponse({ status: 200, description: 'Record updated successfully' })
-  @ApiResponse({ status: 500, description: 'Cannot find record to update' })
+  @ApiResponse({ status: 404, description: 'Record not found' })
+  @ApiResponse({
+    status: 409,
+    description:
+      'Conflict — updated artist, album, and format matches another record',
+  })
   async update(
     @Param('id') id: string,
     @Body() updateRecordDto: UpdateRecordRequestDTO,
   ): Promise<Record> {
-    const record = await this.recordModel.findById(id);
-    if (!record) {
-      throw new InternalServerErrorException('Record not found');
-    }
-
-    Object.assign(record, updateRecordDto);
-
-    const updated = await this.recordModel.updateOne(record);
-    if (!updated) {
-      throw new InternalServerErrorException('Failed to update record');
-    }
-
-    return record;
+    return this.recordService.update(id, updateRecordDto);
   }
 
   @Get()
@@ -72,19 +60,21 @@ export class RecordController {
     name: 'q',
     required: false,
     description:
-      'Search query (search across multiple fields like artist, album, category, etc.)',
+      'Prefix match (case-insensitive) across artist, album, and category — optimized for indexed queries',
     type: String,
   })
   @ApiQuery({
     name: 'artist',
     required: false,
-    description: 'Filter by artist name',
+    description:
+      'Filter by artist name (case-insensitive prefix match, index-friendly)',
     type: String,
   })
   @ApiQuery({
     name: 'album',
     required: false,
-    description: 'Filter by album name',
+    description:
+      'Filter by album name (case-insensitive prefix match, index-friendly)',
     type: String,
   })
   @ApiQuery({
@@ -101,45 +91,41 @@ export class RecordController {
     enum: RecordCategory,
     type: String,
   })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    description: 'Pagination page number',
+    type: Number,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Pagination size (max 100)',
+    type: Number,
+  })
   async findAll(
     @Query('q') q?: string,
     @Query('artist') artist?: string,
     @Query('album') album?: string,
     @Query('format') format?: RecordFormat,
     @Query('category') category?: RecordCategory,
-  ): Promise<Record[]> {
-    const allRecords = await this.recordModel.find().exec();
-
-    const filteredRecords = allRecords.filter((record) => {
-      let match = true;
-
-      if (q) {
-        match =
-          match &&
-          (record.artist.includes(q) ||
-            record.album.includes(q) ||
-            record.category.includes(q));
-      }
-
-      if (artist) {
-        match = match && record.artist.includes(artist);
-      }
-
-      if (album) {
-        match = match && record.album.includes(album);
-      }
-
-      if (format) {
-        match = match && record.format === format;
-      }
-
-      if (category) {
-        match = match && record.category === category;
-      }
-
-      return match;
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page?: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit?: number,
+  ): Promise<{
+    data: Record[];
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  }> {
+    return this.recordService.findAll({
+      q,
+      artist,
+      album,
+      format,
+      category,
+      page,
+      limit,
     });
-
-    return filteredRecords;
   }
 }
